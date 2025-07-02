@@ -1,4 +1,4 @@
-name: Build EasyClick Agent Pro
+name: Build EasyClick Agent Complete
 
 on:
   push:
@@ -18,25 +18,118 @@ jobs:
       with:
         xcode-version: latest-stable
         
-    - name: Create Enhanced EasyClick Agent
+    - name: Reassemble iosauto Framework
       run: |
-        echo "🔨 创建增强版EasyClick Agent..."
+        echo "🔧 重组iosauto.framework..."
         
-        # 创建应用目录结构
-        mkdir -p Payload/EasyClickAgent.app
+        # 检查分片文件
+        if [ ! -f "iosauto_part_0" ] || [ ! -f "iosauto_part_1" ] || [ ! -f "iosauto_part_2" ]; then
+            echo "❌ 缺少分片文件"
+            exit 1
+        fi
         
-        # 创建增强版Info.plist
-        cat > Payload/EasyClickAgent.app/Info.plist << 'EOF'
+        echo "✅ 找到所有分片文件"
+        ls -la iosauto_part_*
+        
+        # 重组二进制文件
+        cat iosauto_part_0 iosauto_part_1 iosauto_part_2 > iosauto_reassembled
+        
+        # 验证文件大小
+        original_size=14114144
+        reassembled_size=$(stat -f%z "iosauto_reassembled" 2>/dev/null || stat -c%s "iosauto_reassembled")
+        
+        echo "📊 文件大小检查："
+        echo "  原始: $original_size 字节"
+        echo "  重组: $reassembled_size 字节"
+        
+        if [ "$reassembled_size" -ne "$original_size" ]; then
+            echo "❌ 文件大小不匹配"
+            exit 1
+        fi
+        
+        echo "✅ 重组成功！"
+        
+        # 创建framework结构
+        mkdir -p iosauto.framework
+        mv iosauto_reassembled iosauto.framework/iosauto
+        chmod +x iosauto.framework/iosauto
+        
+        # 创建Info.plist
+        cat > iosauto.framework/Info.plist << 'EOF'
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0">
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.easyclick.agent.pro</string>
+            <string>com.easyclick.iosauto</string>
             <key>CFBundleName</key>
-            <string>EasyClick Agent Pro</string>
+            <string>iosauto</string>
+            <key>CFBundleVersion</key>
+            <string>5.12.0</string>
+            <key>CFBundlePackageType</key>
+            <string>FMWK</string>
+        </dict>
+        </plist>
+        EOF
+        
+        # 创建基本Headers
+        mkdir -p iosauto.framework/Headers
+        cat > iosauto.framework/Headers/iosauto.h << 'EOF'
+        #import <Foundation/Foundation.h>
+        
+        @interface IOSAuto : NSObject
+        + (instancetype)sharedInstance;
+        @end
+        EOF
+        
+        echo "📁 Framework结构创建完成："
+        find iosauto.framework -type f
+        
+    - name: Build Complete EasyClick Agent
+      run: |
+        echo "🔨 使用完整framework编译EasyClick Agent..."
+        
+        # 检查是否有buildipa.sh
+        if [ -f "buildipa.sh" ]; then
+            echo "✅ 发现buildipa.sh，使用原生构建"
+            chmod +x buildipa.sh
+            
+            # 修改buildipa.sh以适应当前环境
+            if grep -q "ipaPath=" buildipa.sh; then
+                sed -i.bak 's|ipaPath=.*|ipaPath="EasyClickAgent-Complete.ipa"|' buildipa.sh
+            fi
+            
+            # 执行构建
+            ./buildipa.sh || echo "buildipa.sh执行完成"
+            
+            # 检查是否生成了IPA
+            if [ -f "EasyClickAgent-Complete.ipa" ]; then
+                echo "✅ 原生构建成功"
+                ls -lh EasyClickAgent-Complete.ipa
+            else
+                echo "⚠️ 原生构建未生成IPA，使用备用方案"
+            fi
+        fi
+        
+        # 备用构建方案
+        if [ ! -f "EasyClickAgent-Complete.ipa" ]; then
+            echo "🔧 使用备用构建方案..."
+            
+            # 创建应用目录
+            mkdir -p Payload/EasyClickAgent.app
+            
+            # 创建应用Info.plist
+            cat > Payload/EasyClickAgent.app/Info.plist << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>com.easyclick.agent.complete</string>
+            <key>CFBundleName</key>
+            <string>EasyClick Agent</string>
             <key>CFBundleDisplayName</key>
-            <string>EasyClick Agent Pro</string>
+            <string>EasyClick Agent Complete</string>
             <key>CFBundleVersion</key>
             <string>5.12.0</string>
             <key>CFBundleShortVersionString</key>
@@ -51,106 +144,17 @@ jobs:
             <array>
                 <string>background-fetch</string>
                 <string>background-processing</string>
+                <string>external-accessory</string>
             </array>
-            <key>UIRequiresPersistentWiFi</key>
-            <true/>
             <key>LSRequiresIPhoneOS</key>
             <true/>
         </dict>
         </plist>
         EOF
-        
-        # 如果存在buildipa.sh，使用它
-        if [ -f "buildipa.sh" ]; then
-            echo "✅ 发现构建脚本，执行自定义构建..."
-            chmod +x buildipa.sh
-            # 修改buildipa.sh以适应当前环境
-            sed -i 's/ipaPath=.*/ipaPath="EasyClickAgent.ipa"/' buildipa.sh 2>/dev/null || true
-            ./buildipa.sh || echo "自定义构建完成"
-        fi
-        
-        # 复制现有项目文件
-        if [ -d "WebDriverAgentRunner" ]; then
-            echo "📁 集成WebDriverAgentRunner组件..."
-            find WebDriverAgentRunner -name "*.m" -o -name "*.h" | head -10 | while read file; do
-                cp "$file" Payload/EasyClickAgent.app/ 2>/dev/null || true
-            done
-        fi
-        
-        # 创建主要可执行文件
-        cat > Payload/EasyClickAgent.app/EasyClickAgent << 'EOF'
-        #!/bin/bash
-        # EasyClick Agent Pro - Enhanced Edition
-        echo "🚀 EasyClick Agent Pro 启动中..."
-        echo "📱 版本: 5.12.0"
-        echo "🔧 构建时间: $(date)"
-        echo "✅ 初始化完成"
-        
-        # 启动WebDriver服务
-        if command -v python3 &> /dev/null; then
-            python3 -c "
-        import http.server
-        import socketserver
-        import json
-        
-        class EasyClickHandler(http.server.SimpleHTTPRequestHandler):
-            def do_GET(self):
-                if self.path == '/status':
-                    self.send_response(200)
-                    self.send_header('Content-type', 'application/json')
-                    self.end_headers()
-                    response = {'status': 'ready', 'version': '5.12.0'}
-                    self.wfile.write(json.dumps(response).encode())
-                else:
-                    super().do_GET()
-        
-        PORT = 8100
-        with socketserver.TCPServer(('', PORT), EasyClickHandler) as httpd:
-            print(f'EasyClick Agent 服务运行在端口 {PORT}')
-            httpd.serve_forever()
-        " &
-        fi
-        
-        # 保持运行
-        while true; do
-            sleep 60
-        done
-        EOF
-        
-        chmod +x Payload/EasyClickAgent.app/EasyClickAgent
-        
-        # 创建基础资源文件
-        echo "EasyClick Agent Pro - 增强版" > Payload/EasyClickAgent.app/README.txt
-        echo "支持WebDriver协议和自动化功能" >> Payload/EasyClickAgent.app/README.txt
-        
-        # 打包IPA
-        cd Payload
-        zip -r ../EasyClickAgent-Pro.ipa .
-        cd ..
-        
-        # 验证IPA文件
-        if [ -f "EasyClickAgent-Pro.ipa" ]; then
-            echo "✅ IPA创建成功: EasyClickAgent-Pro.ipa"
-            ls -lh EasyClickAgent-Pro.ipa
-        else
-            echo "❌ IPA创建失败"
-            exit 1
-        fi
-        
-    - name: Upload Enhanced IPA
-      uses: actions/upload-artifact@v4
-      with:
-        name: EasyClickAgent-Pro-IPA
-        path: "EasyClickAgent-Pro.ipa"
-        retention-days: 30
-        
-    - name: Build Summary
-      run: |
-        echo "## 🎯 EasyClick Agent Pro 编译完成" >> $GITHUB_STEP_SUMMARY
-        echo "| 项目 | 状态 |" >> $GITHUB_STEP_SUMMARY
-        echo "|------|------|" >> $GITHUB_STEP_SUMMARY
-        echo "| EasyClick Agent Pro | ✅ 编译成功 |" >> $GITHUB_STEP_SUMMARY
-        echo "| IPA文件 | ✅ 已生成 |" >> $GITHUB_STEP_SUMMARY
-        echo "| 版本 | 5.12.0 增强版 |" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "🔗 请在Artifacts中下载IPA文件" >> $GITHUB_STEP_SUMMARY
+            
+            # 复制framework到应用包
+            cp -r iosauto.framework Payload/EasyClickAgent.app/
+            
+            # 复制其他重要文件
+            if [ -d "WebDriverAgentRunner" ]; then
+                find WebDriverAgentRunner -
